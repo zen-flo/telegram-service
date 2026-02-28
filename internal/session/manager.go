@@ -3,6 +3,8 @@ package session
 import (
 	"crypto/rand"
 	"errors"
+	"github.com/zen-flo/telegram-service/internal/telegram"
+	"go.uber.org/zap"
 	"sync"
 	"time"
 
@@ -16,10 +18,12 @@ var (
 type Manager struct {
 	mu       sync.RWMutex
 	sessions map[string]*Session
+	logger   *zap.Logger
 }
 
-func NewManager() *Manager {
+func NewManager(logger *zap.Logger) *Manager {
 	return &Manager{
+		logger:   logger,
 		sessions: make(map[string]*Session),
 	}
 }
@@ -30,7 +34,16 @@ func (m *Manager) Create() (*Session, error) {
 		return nil, err
 	}
 
-	session := New(id)
+	tgClient := telegram.NewClient(m.logger)
+
+	session := New(id, tgClient)
+
+	// start client lifecycle inside session runtime
+	go func() {
+		if err := tgClient.Start(session.Context()); err != nil {
+			m.logger.Error("telegram client stopped", zap.Error(err))
+		}
+	}()
 
 	m.mu.Lock()
 	m.sessions[id] = session
@@ -55,12 +68,12 @@ func (m *Manager) Delete(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	s, ok := m.sessions[id]
+	session, ok := m.sessions[id]
 	if !ok {
 		return ErrSessionNotFound
 	}
 
-	s.Close()
+	session.Close()
 
 	delete(m.sessions, id)
 	return nil

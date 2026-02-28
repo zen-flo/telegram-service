@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"github.com/zen-flo/telegram-service/internal/session"
 
 	"github.com/zen-flo/telegram-service/internal/config"
 	"github.com/zen-flo/telegram-service/internal/grpc"
@@ -9,6 +10,8 @@ import (
 )
 
 type App struct {
+	cfg    *config.Config
+	logger *zap.Logger
 	server *grpc.Server
 }
 
@@ -17,7 +20,12 @@ func New(
 	logger *zap.Logger,
 ) (*App, error) {
 
-	telegramHandler := grpc.NewTelegramHandler()
+	sessionManager := session.NewManager()
+
+	telegramHandler := grpc.NewTelegramHandler(
+		sessionManager,
+		logger,
+	)
 
 	server := grpc.NewServer(
 		cfg.GRPCPort,
@@ -26,6 +34,8 @@ func New(
 	)
 
 	return &App{
+		cfg:    cfg,
+		logger: logger,
 		server: server,
 	}, nil
 }

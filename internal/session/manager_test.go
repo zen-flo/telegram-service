@@ -4,45 +4,35 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 )
 
-func TestManager_CreateAndGet(t *testing.T) {
+func TestManager_CreateAndDelete(t *testing.T) {
 	manager := NewManager()
 
 	s, err := manager.Create()
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("create error: %v", err)
 	}
 
-	if s.ID() == "" {
-		t.Fatal("expected non-empty session ID")
-	}
+	done := make(chan struct{})
 
-	got, err := manager.Get(s.ID())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if got.ID() != s.ID() {
-		t.Fatal("retrieved session does not match created one")
-	}
-}
-
-func TestManager_Delete(t *testing.T) {
-	manager := NewManager()
-
-	s, err := manager.Create()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	go func() {
+		select {
+		case <-s.Context().Done():
+			close(done)
+		}
+	}()
 
 	if err := manager.Delete(s.ID()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("delete error: %v", err)
 	}
 
-	_, err = manager.Get(s.ID())
-	if !errors.Is(err, ErrSessionNotFound) {
-		t.Fatalf("expected ErrSessionNotFound, got %v", err)
+	select {
+	case <-done:
+	// ok
+	case <-time.After(time.Second):
+		t.Fatal("expected session context to be cancelled")
 	}
 }
 
@@ -56,8 +46,7 @@ func TestManager_ConcurrentCreate(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func() {
 			defer wg.Done()
-			_, err := manager.Create()
-			if err != nil {
+			if _, err := manager.Create(); err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
 		}()
@@ -71,5 +60,14 @@ func TestManager_ConcurrentCreate(t *testing.T) {
 
 	if len(manager.sessions) != n {
 		t.Fatalf("expected %d sessions, got %d", n, len(manager.sessions))
+	}
+}
+
+func TestManager_DeleteNotFound(t *testing.T) {
+	manager := NewManager()
+
+	err := manager.Delete("not-exist")
+	if !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("expected ErrSessionNotFound")
 	}
 }

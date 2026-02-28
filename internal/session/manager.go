@@ -55,9 +55,12 @@ func (m *Manager) Delete(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, ok := m.sessions[id]; !ok {
+	s, ok := m.sessions[id]
+	if !ok {
 		return ErrSessionNotFound
 	}
+
+	s.Close()
 
 	delete(m.sessions, id)
 	return nil

@@ -69,6 +69,7 @@ func (c *Client) Start(ctx context.Context) error {
 				return runCtx.Err()
 			case req := <-c.qrReqCh:
 				qr := qrlogin.NewQR(api, c.appID, c.appHash, qrlogin.Options{})
+
 				token, err := qr.Export(runCtx)
 				if err != nil {
 					req.resp <- qrResp{"", err}

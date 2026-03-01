@@ -120,7 +120,37 @@ func (h *TelegramHandler) SubscribeMessages(
 	stream api.TelegramService_SubscribeMessagesServer,
 ) error {
 
-	return status.Error(codes.Unimplemented, "not implemented")
+	s, err := h.manager.Get(req.GetSessionId())
+	if err != nil {
+		return status.Error(codes.NotFound, "session not found")
+	}
+
+	sub := s.SubscribeMessages()
+
+	for {
+		select {
+
+		case <-stream.Context().Done():
+			return nil
+
+		case msg, ok := <-sub:
+			if !ok {
+				return nil
+			}
+
+			update := &api.MessageUpdate{
+				MessageId: int64Ptr(msg.ID),
+				From:      stringPtr(msg.From),
+				Text:      stringPtr(msg.Text),
+				Timestamp: int64Ptr(msg.Timestamp),
+			}
+
+			if err := stream.Send(update); err != nil {
+				h.logger.Error("stream send error", zap.Error(err))
+				return err
+			}
+		}
+	}
 }
 
 func (h *TelegramHandler) GetSessionStatus(

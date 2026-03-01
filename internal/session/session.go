@@ -88,7 +88,12 @@ func (s *Session) StartQR(onReady func()) (string, error) {
 
 func (s *Session) SubscribeMessages() <-chan *Message {
 	ch := make(chan *Message, 16)
-	s.msgSubs <- ch
+
+	select {
+	case s.msgSubs <- ch:
+	default:
+	}
+
 	return ch
 }
 

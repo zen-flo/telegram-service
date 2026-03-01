@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/gotd/td/telegram/auth/qrlogin"
 	"github.com/gotd/td/tg"
+	"github.com/zen-flo/telegram-service/internal/session"
 	"sync"
 	"time"
 
@@ -166,4 +167,13 @@ func (c *Client) SendMessage(
 	}
 
 	return 0, nil
+}
+
+func (c *Client) DispatchMessage(
+	session interface {
+		PublishUpdate(*session.Message)
+	},
+	msg *session.Message,
+) {
+	session.PublishUpdate(msg)
 }

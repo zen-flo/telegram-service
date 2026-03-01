@@ -103,3 +103,25 @@ func (h *TelegramHandler) SubscribeMessages(
 func stringPtr(s string) *string {
 	return &s
 }
+
+func (h *TelegramHandler) GetSessionStatus(
+	ctx context.Context,
+	req *api.GetSessionStatusRequest,
+) (*api.GetSessionStatusResponse, error) {
+
+	s, err := h.manager.Get(req.GetSessionId())
+	if err != nil {
+		if errors.Is(err, session.ErrSessionNotFound) {
+			return nil, status.Error(codes.NotFound, "session not found")
+		}
+		return nil, status.Error(codes.Internal, "internal error")
+	}
+
+	return &api.GetSessionStatusResponse{
+		Ready: boolPtr(s.IsReady()),
+	}, nil
+}
+
+func boolPtr(b bool) *bool {
+	return &b
+}

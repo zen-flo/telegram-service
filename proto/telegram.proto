@@ -9,6 +9,7 @@ service TelegramService {
   rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse);
   rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
   rpc SubscribeMessages(SubscribeMessagesRequest) returns (stream MessageUpdate);
+  rpc GetSessionStatus(GetSessionStatusRequest) returns (GetSessionStatusResponse);
 }
 
 message CreateSessionRequest {}
@@ -43,4 +44,12 @@ message MessageUpdate {
   string from = 2;
   string text = 3;
   int64 timestamp = 4;
+}
+
+message GetSessionStatusRequest {
+  string session_id = 1;
+}
+
+message GetSessionStatusResponse {
+  bool ready = 1;
 }

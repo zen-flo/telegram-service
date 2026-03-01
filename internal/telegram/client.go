@@ -62,11 +62,21 @@ func (c *Client) Start(ctx context.Context) error {
 	}
 
 	c.mu.Lock()
-	c.client = telegram.NewClient(c.appID, c.appHash, telegram.Options{})
+	c.client = telegram.NewClient(
+		c.appID,
+		c.appHash,
+		telegram.Options{
+			UpdateHandler: telegram.UpdateHandlerFunc(func(ctx context.Context, u tg.UpdatesClass) error {
+				c.handleUpdate(u)
+				return nil
+			}),
+		},
+	)
 	c.mu.Unlock()
 
 	return c.client.Run(ctx, func(runCtx context.Context) error {
 		c.logger.Info("gotd run callback started")
+
 		api := c.client.API()
 
 		for {
@@ -108,6 +118,75 @@ func (c *Client) Start(ctx context.Context) error {
 				}(req, qr)
 			}
 		}
+	})
+}
+
+func (c *Client) handleUpdate(update tg.UpdatesClass) {
+	switch u := update.(type) {
+
+	case *tg.Updates:
+		for _, upd := range u.Updates {
+			c.processSingleUpdate(upd)
+		}
+
+	case *tg.UpdateShort:
+		c.processSingleUpdate(u.Update)
+
+	case *tg.UpdateShortMessage:
+		c.publishMessage(
+			int64(u.ID),
+			"unknown",
+			u.Message,
+			int64(u.Date),
+		)
+
+	case *tg.UpdateShortChatMessage:
+		c.publishMessage(
+			int64(u.ID),
+			"chat",
+			u.Message,
+			int64(u.Date),
+		)
+	}
+}
+
+func (c *Client) processSingleUpdate(update tg.UpdateClass) {
+	switch u := update.(type) {
+
+	case *tg.UpdateNewMessage:
+		msg, ok := u.Message.(*tg.Message)
+		if !ok {
+			return
+		}
+
+		if msg.Message == "" {
+			return
+		}
+
+		from := "unknown"
+		if msg.FromID != nil {
+			from = "user"
+		}
+
+		c.publishMessage(
+			int64(msg.ID),
+			from,
+			msg.Message,
+			int64(msg.Date),
+		)
+	}
+}
+
+func (c *Client) publishMessage(id int64, from, text string, ts int64) {
+	if c.dispatcher == nil {
+		return
+	}
+
+	c.dispatcher.Publish(c.sessionID, &broker.Message{
+		ID:        id,
+		From:      from,
+		Text:      text,
+		Timestamp: ts,
 	})
 }
 

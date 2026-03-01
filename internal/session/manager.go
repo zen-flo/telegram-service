@@ -3,6 +3,7 @@ package session
 import (
 	"crypto/rand"
 	"errors"
+	"github.com/zen-flo/telegram-service/internal/broker"
 	"github.com/zen-flo/telegram-service/internal/telegram"
 	"go.uber.org/zap"
 	"sync"
@@ -22,14 +23,17 @@ type Manager struct {
 
 	appID   int
 	appHash string
+
+	dispatcher *broker.Dispatcher
 }
 
-func NewManager(appID int, appHash string, logger *zap.Logger) *Manager {
+func NewManager(appID int, appHash string, logger *zap.Logger, dispatcher *broker.Dispatcher) *Manager {
 	return &Manager{
-		logger:   logger,
-		sessions: make(map[string]*Session),
-		appID:    appID,
-		appHash:  appHash,
+		logger:     logger,
+		sessions:   make(map[string]*Session),
+		appID:      appID,
+		appHash:    appHash,
+		dispatcher: dispatcher,
 	}
 }
 
@@ -39,9 +43,9 @@ func (m *Manager) Create() (*Session, error) {
 		return nil, err
 	}
 
-	tgClient := telegram.NewClient(m.appID, m.appHash, m.logger)
+	tgClient := telegram.NewClient(m.appID, m.appHash, m.logger, m.dispatcher, id)
 
-	session := New(id, tgClient)
+	session := New(id, tgClient, m.dispatcher)
 
 	session.Start()
 

@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"github.com/zen-flo/telegram-service/internal/broker"
 	"go.uber.org/zap"
 	"sync"
 	"testing"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestManager_CreateAndDelete(t *testing.T) {
-	manager := NewManager(0, "", zap.NewNop())
+	manager := NewManager(0, "", zap.NewNop(), broker.NewDispatcher())
 
 	s, err := manager.Create()
 	if err != nil {
@@ -29,7 +30,7 @@ func TestManager_CreateAndDelete(t *testing.T) {
 }
 
 func TestManager_ConcurrentCreate(t *testing.T) {
-	manager := NewManager(0, "", zap.NewNop())
+	manager := NewManager(0, "", zap.NewNop(), broker.NewDispatcher())
 
 	const n = 100
 	var wg sync.WaitGroup
@@ -56,7 +57,7 @@ func TestManager_ConcurrentCreate(t *testing.T) {
 }
 
 func TestManager_DeleteNotFound(t *testing.T) {
-	manager := NewManager(0, "", zap.NewNop())
+	manager := NewManager(0, "", zap.NewNop(), broker.NewDispatcher())
 
 	err := manager.Delete("not-exist")
 	if !errors.Is(err, ErrSessionNotFound) {

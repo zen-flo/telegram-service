@@ -5,7 +5,7 @@ import (
 	"errors"
 	"github.com/gotd/td/telegram/auth/qrlogin"
 	"github.com/gotd/td/tg"
-	"github.com/zen-flo/telegram-service/internal/session"
+	"github.com/zen-flo/telegram-service/internal/broker"
 	"sync"
 	"time"
 
@@ -22,8 +22,10 @@ type Client struct {
 	client *telegram.Client
 
 	qrReqCh chan qrReq
+	noop    bool
 
-	noop bool
+	dispatcher *broker.Dispatcher
+	sessionID  string
 }
 
 type qrReq struct {
@@ -36,12 +38,14 @@ type qrResp struct {
 	err error
 }
 
-func NewClient(appID int, appHash string, logger *zap.Logger) *Client {
+func NewClient(appID int, appHash string, logger *zap.Logger, dispatcher *broker.Dispatcher, sessionID string) *Client {
 	c := &Client{
-		appID:   appID,
-		appHash: appHash,
-		logger:  logger,
-		qrReqCh: make(chan qrReq),
+		appID:      appID,
+		appHash:    appHash,
+		logger:     logger,
+		qrReqCh:    make(chan qrReq),
+		dispatcher: dispatcher,
+		sessionID:  sessionID,
 	}
 
 	if appID == 0 || appHash == "" {
@@ -70,6 +74,7 @@ func (c *Client) Start(ctx context.Context) error {
 			case <-runCtx.Done():
 				c.logger.Info("gotd run callback exiting")
 				return runCtx.Err()
+
 			case req := <-c.qrReqCh:
 				qr := qrlogin.NewQR(api, c.appID, c.appHash, qrlogin.Options{})
 
@@ -90,6 +95,15 @@ func (c *Client) Start(ctx context.Context) error {
 					}
 					if r.onAuthDone != nil {
 						r.onAuthDone()
+					}
+
+					if c.dispatcher != nil {
+						c.dispatcher.Publish(c.sessionID, &broker.Message{
+							ID:        time.Now().UnixNano(),
+							From:      "system",
+							Text:      "authorized",
+							Timestamp: time.Now().Unix(),
+						})
 					}
 				}(req, qr)
 			}
@@ -167,13 +181,4 @@ func (c *Client) SendMessage(
 	}
 
 	return 0, nil
-}
-
-func (c *Client) DispatchMessage(
-	session interface {
-		PublishUpdate(*session.Message)
-	},
-	msg *session.Message,
-) {
-	session.PublishUpdate(msg)
 }

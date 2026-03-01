@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"github.com/zen-flo/telegram-service/internal/broker"
 	"github.com/zen-flo/telegram-service/internal/session"
 
 	"github.com/zen-flo/telegram-service/internal/config"
@@ -20,7 +21,14 @@ func New(
 	logger *zap.Logger,
 ) (*App, error) {
 
-	sessionManager := session.NewManager(cfg.TelegramAPIID, cfg.TelegramAPIHash, logger)
+	dispatcher := broker.NewDispatcher()
+
+	sessionManager := session.NewManager(
+		cfg.TelegramAPIID,
+		cfg.TelegramAPIHash,
+		logger,
+		dispatcher,
+	)
 
 	telegramHandler := grpc.NewTelegramHandler(
 		sessionManager,

@@ -3,10 +3,18 @@ package session
 import (
 	"context"
 	"errors"
+	"github.com/zen-flo/telegram-service/internal/broker"
 	"github.com/zen-flo/telegram-service/internal/telegram"
 	"sync/atomic"
 	"time"
 )
+
+type TelegramClient interface {
+	Start(ctx context.Context) error
+	StartQR(ctx context.Context, onReady func()) (string, error)
+	SendMessage(ctx context.Context, peer, text string) (int64, error)
+	Messages() <-chan *telegram.IncomingMessage
+}
 
 type Session struct {
 	id     string
@@ -14,15 +22,13 @@ type Session struct {
 	cancel context.CancelFunc
 
 	telegramClient *telegram.Client
+	dispatcher     *broker.Dispatcher
 
 	authReady atomic.Bool
-
-	qrCode string
-
-	msgSubs chan chan *Message
+	qrCode    string
 }
 
-func New(id string, client *telegram.Client) *Session {
+func New(id string, client *telegram.Client, dispatcher *broker.Dispatcher) *Session {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Session{
@@ -30,7 +36,7 @@ func New(id string, client *telegram.Client) *Session {
 		ctx:            ctx,
 		cancel:         cancel,
 		telegramClient: client,
-		msgSubs:        make(chan chan *Message, 16),
+		dispatcher:     dispatcher,
 	}
 }
 
@@ -86,15 +92,12 @@ func (s *Session) StartQR(onReady func()) (string, error) {
 	return qr, nil
 }
 
-func (s *Session) SubscribeMessages() <-chan *Message {
-	ch := make(chan *Message, 16)
+func (s *Session) SubscribeMessages() <-chan *broker.Message {
+	return s.dispatcher.Subscribe(s.id)
+}
 
-	select {
-	case s.msgSubs <- ch:
-	default:
-	}
-
-	return ch
+func (s *Session) Unsubscribe(ch chan *broker.Message) {
+	s.dispatcher.Unsubscribe(s.id, ch)
 }
 
 func (s *Session) SendMessage(peer, text string) (int64, error) {

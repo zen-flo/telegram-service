@@ -19,12 +19,17 @@ type Manager struct {
 	mu       sync.RWMutex
 	sessions map[string]*Session
 	logger   *zap.Logger
+
+	appID   int
+	appHash string
 }
 
-func NewManager(logger *zap.Logger) *Manager {
+func NewManager(appID int, appHash string, logger *zap.Logger) *Manager {
 	return &Manager{
 		logger:   logger,
 		sessions: make(map[string]*Session),
+		appID:    appID,
+		appHash:  appHash,
 	}
 }
 
@@ -34,16 +39,11 @@ func (m *Manager) Create() (*Session, error) {
 		return nil, err
 	}
 
-	tgClient := telegram.NewClient(m.logger)
+	tgClient := telegram.NewClient(m.appID, m.appHash, m.logger)
 
 	session := New(id, tgClient)
 
-	// start client lifecycle inside session runtime
-	go func() {
-		if err := tgClient.Start(session.Context()); err != nil {
-			m.logger.Error("telegram client stopped", zap.Error(err))
-		}
-	}()
+	session.Start()
 
 	m.mu.Lock()
 	m.sessions[id] = session

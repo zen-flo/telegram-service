@@ -20,7 +20,7 @@ func New(
 	logger *zap.Logger,
 ) (*App, error) {
 
-	sessionManager := session.NewManager(logger)
+	sessionManager := session.NewManager(cfg.TelegramAPIID, cfg.TelegramAPIHash, logger)
 
 	telegramHandler := grpc.NewTelegramHandler(
 		sessionManager,

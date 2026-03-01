@@ -39,12 +39,22 @@ func (h *TelegramHandler) CreateSession(
 		return nil, status.Error(codes.Internal, "failed to create session")
 	}
 
+	qrURL, err := s.StartQR(func() {
+		s.MarkReady()
+		h.logger.Info("session authorized", zap.String("session_id", s.ID()))
+	})
+	if err != nil {
+		h.logger.Error("failed to start qr auth", zap.Error(err))
+		return nil, status.Error(codes.Internal, "failed to start qr auth")
+	}
+
 	h.logger.Info("session created",
 		zap.String("session_id", s.ID()),
 	)
 
 	return &api.CreateSessionResponse{
 		SessionId: stringPtr(s.ID()),
+		QrCode:    stringPtr(qrURL),
 	}, nil
 }
 

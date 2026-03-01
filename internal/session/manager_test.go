@@ -9,7 +9,7 @@ import (
 )
 
 func TestManager_CreateAndDelete(t *testing.T) {
-	manager := NewManager(zap.NewNop())
+	manager := NewManager(0, "", zap.NewNop())
 
 	s, err := manager.Create()
 	if err != nil {
@@ -29,7 +29,7 @@ func TestManager_CreateAndDelete(t *testing.T) {
 }
 
 func TestManager_ConcurrentCreate(t *testing.T) {
-	manager := NewManager(zap.NewNop())
+	manager := NewManager(0, "", zap.NewNop())
 
 	const n = 100
 	var wg sync.WaitGroup
@@ -56,7 +56,7 @@ func TestManager_ConcurrentCreate(t *testing.T) {
 }
 
 func TestManager_DeleteNotFound(t *testing.T) {
-	manager := NewManager(zap.NewNop())
+	manager := NewManager(0, "", zap.NewNop())
 
 	err := manager.Delete("not-exist")
 	if !errors.Is(err, ErrSessionNotFound) {

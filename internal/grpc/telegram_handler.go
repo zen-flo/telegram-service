@@ -44,7 +44,9 @@ func (h *TelegramHandler) CreateSession(
 		h.logger.Info("session authorized", zap.String("session_id", s.ID()))
 	})
 	if err != nil {
-		h.logger.Error("failed to start qr auth", zap.Error(err))
+		h.logger.Error("failed to start qr auth",
+			zap.Error(err),
+		)
 		return nil, status.Error(codes.Internal, "failed to start qr auth")
 	}
 
@@ -89,7 +91,28 @@ func (h *TelegramHandler) SendMessage(
 	req *api.SendMessageRequest,
 ) (*api.SendMessageResponse, error) {
 
-	return nil, status.Error(codes.Unimplemented, "not implemented")
+	s, err := h.manager.Get(req.GetSessionId())
+	if err != nil {
+		return nil, status.Error(codes.NotFound, "session not found")
+	}
+
+	if !s.IsReady() {
+		return nil, status.Error(codes.FailedPrecondition, "session not authorized")
+	}
+
+	msgID, err := s.SendMessage(
+		req.GetPeer(),
+		req.GetText(),
+	)
+
+	if err != nil {
+		h.logger.Error("failed to send message", zap.Error(err))
+		return nil, status.Error(codes.Internal, "failed to send message")
+	}
+
+	return &api.SendMessageResponse{
+		MessageId: int64Ptr(msgID),
+	}, nil
 }
 
 func (h *TelegramHandler) SubscribeMessages(
@@ -98,10 +121,6 @@ func (h *TelegramHandler) SubscribeMessages(
 ) error {
 
 	return status.Error(codes.Unimplemented, "not implemented")
-}
-
-func stringPtr(s string) *string {
-	return &s
 }
 
 func (h *TelegramHandler) GetSessionStatus(
@@ -120,6 +139,14 @@ func (h *TelegramHandler) GetSessionStatus(
 	return &api.GetSessionStatusResponse{
 		Ready: boolPtr(s.IsReady()),
 	}, nil
+}
+
+func stringPtr(s string) *string {
+	return &s
+}
+
+func int64Ptr(i int64) *int64 {
+	return &i
 }
 
 func boolPtr(b bool) *bool {

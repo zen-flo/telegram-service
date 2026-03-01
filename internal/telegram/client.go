@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"github.com/gotd/td/telegram/auth/qrlogin"
+	"github.com/gotd/td/tg"
 	"sync"
+	"time"
 
 	"github.com/gotd/td/telegram"
 	"go.uber.org/zap"
@@ -116,4 +118,52 @@ func (c *Client) StartQR(ctx context.Context, onAuthorized func()) (string, erro
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
+}
+
+func (c *Client) SendMessage(
+	ctx context.Context,
+	peer string,
+	text string,
+) (int64, error) {
+
+	if c.noop {
+		return 0, errors.New("client is in noop mode")
+	}
+
+	c.mu.RLock()
+	client := c.client
+	c.mu.RUnlock()
+
+	if client == nil {
+		return 0, errors.New("client not started")
+	}
+
+	api := client.API()
+
+	peerInput := &tg.InputPeerUser{
+		UserID: 0,
+	}
+
+	_ = peer
+
+	res, err := api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
+		Peer:     peerInput,
+		Message:  text,
+		RandomID: time.Now().UnixNano(),
+	})
+
+	if err != nil {
+		return 0, err
+	}
+
+	switch v := res.(type) {
+	case *tg.Updates:
+		if len(v.Updates) > 0 {
+			if m, ok := v.Updates[0].(*tg.UpdateMessageID); ok {
+				return int64(m.ID), nil
+			}
+		}
+	}
+
+	return 0, nil
 }

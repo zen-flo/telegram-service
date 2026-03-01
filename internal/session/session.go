@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"github.com/zen-flo/telegram-service/internal/telegram"
 	"sync/atomic"
 	"time"
@@ -17,6 +18,8 @@ type Session struct {
 	authReady atomic.Bool
 
 	qrCode string
+
+	msgSubs chan chan *Message
 }
 
 func New(id string, client *telegram.Client) *Session {
@@ -27,6 +30,7 @@ func New(id string, client *telegram.Client) *Session {
 		ctx:            ctx,
 		cancel:         cancel,
 		telegramClient: client,
+		msgSubs:        make(chan chan *Message, 16),
 	}
 }
 
@@ -80,4 +84,22 @@ func (s *Session) StartQR(onReady func()) (string, error) {
 
 	s.qrCode = qr
 	return qr, nil
+}
+
+func (s *Session) SubscribeMessages() <-chan *Message {
+	ch := make(chan *Message, 16)
+	s.msgSubs <- ch
+	return ch
+}
+
+func (s *Session) SendMessage(peer, text string) (int64, error) {
+	if !s.IsReady() {
+		return 0, errors.New("session not authorized")
+	}
+
+	return s.telegramClient.SendMessage(
+		s.ctx,
+		peer,
+		text,
+	)
 }

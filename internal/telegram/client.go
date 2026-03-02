@@ -90,17 +90,18 @@ func (c *Client) Start(ctx context.Context) error {
 			case <-runCtx.Done():
 				c.logger.Info("gotd run callback exiting")
 
-				// attempt logout before shutdown
-				_, err := api.AuthLogOut(runCtx)
-				if err != nil {
-					c.logger.Warn("auth.logOut failed during shutdown", zap.Error(err))
-				} else {
-					c.logger.Info("telegram client logged out")
+				if api != nil {
+					if _, err := api.AuthLogOut(runCtx); err != nil {
+						c.logger.Warn("auth.logOut failed during shutdown", zap.Error(err))
+					} else {
+						c.logger.Info("telegram client logged out")
+					}
 				}
 
 				return runCtx.Err()
 
 			case req := <-c.qrReqCh:
+
 				qr := qrlogin.NewQR(api, c.appID, c.appHash, qrlogin.Options{})
 
 				token, err := qr.Export(runCtx)
@@ -109,15 +110,23 @@ func (c *Client) Start(ctx context.Context) error {
 					continue
 				}
 
-				url := token.URL()
-				req.resp <- qrResp{url, nil}
+				req.resp <- qrResp{token.URL(), nil}
 
-				go func(r qrReq, q qrlogin.QR) {
-					_, err := q.Import(runCtx)
+				go func(r qrReq) {
+					c.logger.Info("waiting for QR scan confirmation",
+						zap.String("session", c.sessionID))
+
+					_, err := qr.Import(runCtx)
 					if err != nil {
-						c.logger.Error("qr import failed", zap.Error(err))
+						if !errors.Is(err, context.Canceled) {
+							c.logger.Error("qr import failed", zap.Error(err))
+						}
 						return
 					}
+
+					c.logger.Info("telegram auth success",
+						zap.String("session", c.sessionID))
+
 					if r.onAuthDone != nil {
 						r.onAuthDone()
 					}
@@ -130,7 +139,8 @@ func (c *Client) Start(ctx context.Context) error {
 							Timestamp: time.Now().Unix(),
 						})
 					}
-				}(req, qr)
+
+				}(req)
 			}
 		}
 	})

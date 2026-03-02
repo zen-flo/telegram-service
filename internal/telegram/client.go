@@ -48,7 +48,7 @@ func NewClient(appID int, appHash string, logger *zap.Logger, dispatcher *broker
 		appID:      appID,
 		appHash:    appHash,
 		logger:     logger,
-		qrReqCh:    make(chan qrReq),
+		qrReqCh:    make(chan qrReq, 4),
 		dispatcher: dispatcher,
 		sessionID:  sessionID,
 		peerCache:  make(map[string]tg.InputPeerClass),
@@ -182,11 +182,11 @@ func (c *Client) processSingleUpdate(update tg.UpdateClass) {
 
 		switch f := msg.FromID.(type) {
 		case *tg.PeerUser:
-			from = strconv.FormatInt(f.UserID, 10)
+			from = "user:" + strconv.FormatInt(f.UserID, 10)
 		case *tg.PeerChat:
-			from = strconv.FormatInt(f.ChatID, 10)
+			from = "chat:" + strconv.FormatInt(f.ChatID, 10)
 		case *tg.PeerChannel:
-			from = strconv.FormatInt(f.ChannelID, 10)
+			from = "channel:" + strconv.FormatInt(f.ChannelID, 10)
 		}
 
 		c.publishMessage(

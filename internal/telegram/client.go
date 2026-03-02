@@ -6,10 +6,12 @@ import (
 	"github.com/gotd/td/telegram/auth/qrlogin"
 	"github.com/gotd/td/tg"
 	"github.com/zen-flo/telegram-service/internal/broker"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/gotd/td/telegram"
+	tdtelegram "github.com/gotd/td/telegram"
 	"go.uber.org/zap"
 )
 
@@ -19,13 +21,16 @@ type Client struct {
 	logger  *zap.Logger
 
 	mu     sync.RWMutex
-	client *telegram.Client
+	client *tdtelegram.Client
 
 	qrReqCh chan qrReq
 	noop    bool
 
 	dispatcher *broker.Dispatcher
 	sessionID  string
+
+	peerMu    sync.RWMutex
+	peerCache map[string]tg.InputPeerClass
 }
 
 type qrReq struct {
@@ -46,6 +51,7 @@ func NewClient(appID int, appHash string, logger *zap.Logger, dispatcher *broker
 		qrReqCh:    make(chan qrReq),
 		dispatcher: dispatcher,
 		sessionID:  sessionID,
+		peerCache:  make(map[string]tg.InputPeerClass),
 	}
 
 	if appID == 0 || appHash == "" {
@@ -62,11 +68,11 @@ func (c *Client) Start(ctx context.Context) error {
 	}
 
 	c.mu.Lock()
-	c.client = telegram.NewClient(
+	c.client = tdtelegram.NewClient(
 		c.appID,
 		c.appHash,
-		telegram.Options{
-			UpdateHandler: telegram.UpdateHandlerFunc(func(ctx context.Context, u tg.UpdatesClass) error {
+		tdtelegram.Options{
+			UpdateHandler: tdtelegram.UpdateHandlerFunc(func(ctx context.Context, u tg.UpdatesClass) error {
 				c.handleUpdate(u)
 				return nil
 			}),
@@ -83,6 +89,15 @@ func (c *Client) Start(ctx context.Context) error {
 			select {
 			case <-runCtx.Done():
 				c.logger.Info("gotd run callback exiting")
+
+				// attempt logout before shutdown
+				_, err := api.AuthLogOut(runCtx)
+				if err != nil {
+					c.logger.Warn("auth.logOut failed during shutdown", zap.Error(err))
+				} else {
+					c.logger.Info("telegram client logged out")
+				}
+
 				return runCtx.Err()
 
 			case req := <-c.qrReqCh:
@@ -164,8 +179,14 @@ func (c *Client) processSingleUpdate(update tg.UpdateClass) {
 		}
 
 		from := "unknown"
-		if msg.FromID != nil {
-			from = "user"
+
+		switch f := msg.FromID.(type) {
+		case *tg.PeerUser:
+			from = strconv.FormatInt(f.UserID, 10)
+		case *tg.PeerChat:
+			from = strconv.FormatInt(f.ChatID, 10)
+		case *tg.PeerChannel:
+			from = strconv.FormatInt(f.ChannelID, 10)
 		}
 
 		c.publishMessage(
@@ -232,16 +253,15 @@ func (c *Client) SendMessage(
 		return 0, errors.New("client not started")
 	}
 
-	api := client.API()
-
-	peerInput := &tg.InputPeerUser{
-		UserID: 0,
+	inputPeer, err := c.resolvePeer(ctx, peer)
+	if err != nil {
+		return 0, err
 	}
 
-	_ = peer
+	api := client.API()
 
 	res, err := api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
-		Peer:     peerInput,
+		Peer:     inputPeer,
 		Message:  text,
 		RandomID: time.Now().UnixNano(),
 	})
@@ -252,12 +272,67 @@ func (c *Client) SendMessage(
 
 	switch v := res.(type) {
 	case *tg.Updates:
-		if len(v.Updates) > 0 {
-			if m, ok := v.Updates[0].(*tg.UpdateMessageID); ok {
+		for _, upd := range v.Updates {
+			if m, ok := upd.(*tg.UpdateMessageID); ok {
 				return int64(m.ID), nil
 			}
 		}
 	}
 
 	return 0, nil
+}
+
+func (c *Client) resolvePeer(ctx context.Context, peer string) (tg.InputPeerClass, error) {
+	if peer == "" {
+		return nil, errors.New("peer is empty")
+	}
+
+	normalized := strings.TrimPrefix(peer, "@")
+
+	// check cache
+	c.peerMu.RLock()
+	if p, ok := c.peerCache[normalized]; ok {
+		c.peerMu.RUnlock()
+		return p, nil
+	}
+	c.peerMu.RUnlock()
+
+	// resolve via the Telegram API
+	c.mu.RLock()
+	client := c.client
+	c.mu.RUnlock()
+
+	if client == nil {
+		return nil, errors.New("client not started")
+	}
+
+	api := client.API()
+
+	res, err := api.ContactsResolveUsername(ctx, &tg.ContactsResolveUsernameRequest{
+		Username: normalized,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(res.Users) == 0 {
+		return nil, errors.New("user not found")
+	}
+
+	u, ok := res.Users[0].(*tg.User)
+	if !ok {
+		return nil, errors.New("unexpected user type")
+	}
+
+	inputPeer := &tg.InputPeerUser{
+		UserID:     u.ID,
+		AccessHash: u.AccessHash,
+	}
+
+	// caching
+	c.peerMu.Lock()
+	c.peerCache[normalized] = inputPeer
+	c.peerMu.Unlock()
+
+	return inputPeer, nil
 }

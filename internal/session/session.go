@@ -3,10 +3,11 @@ package session
 import (
 	"context"
 	"errors"
-	"github.com/zen-flo/telegram-service/internal/broker"
-	"github.com/zen-flo/telegram-service/internal/telegram"
 	"sync/atomic"
 	"time"
+
+	"github.com/zen-flo/telegram-service/internal/broker"
+	"github.com/zen-flo/telegram-service/internal/telegram"
 )
 
 type TelegramClient interface {
@@ -61,6 +62,9 @@ func (s *Session) IsReady() bool {
 }
 
 func (s *Session) Close() {
+	if s.telegramClient != nil {
+		s.telegramClient.LogOut()
+	}
 	if s.cancel != nil {
 		s.cancel()
 	}

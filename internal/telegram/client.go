@@ -36,6 +36,9 @@ type Client struct {
 	peerMu       sync.RWMutex
 	peerCache    map[string]tg.InputPeerClass
 	loginTokenCh chan struct{}
+
+	runCancel context.CancelFunc // cancels the context passed to client.Run
+	stopCh    chan struct{}      // closed by LogOut to signal the run loop to exit
 }
 
 type qrReq struct {
@@ -58,6 +61,7 @@ func NewClient(appID int, appHash string, logger *zap.Logger, dispatcher *broker
 		sessionID:    sessionID,
 		peerCache:    make(map[string]tg.InputPeerClass),
 		loginTokenCh: make(chan struct{}, 1),
+		stopCh:       make(chan struct{}),
 	}
 
 	if appID == 0 || appHash == "" {
@@ -73,7 +77,10 @@ func (c *Client) Start(ctx context.Context) error {
 		return ctx.Err()
 	}
 
+	runCtx, runCancel := context.WithCancel(ctx)
+
 	c.mu.Lock()
+	c.runCancel = runCancel
 	c.client = tdtelegram.NewClient(
 		c.appID,
 		c.appHash,
@@ -89,25 +96,18 @@ func (c *Client) Start(ctx context.Context) error {
 	)
 	c.mu.Unlock()
 
-	return c.client.Run(ctx, func(runCtx context.Context) error {
+	return c.client.Run(runCtx, func(innerCtx context.Context) error {
 		c.logger.Info("gotd run callback started")
-
-		api := c.client.API()
 
 		for {
 			select {
-			case <-runCtx.Done():
+			case <-innerCtx.Done():
 				c.logger.Info("gotd run callback exiting")
+				return innerCtx.Err()
 
-				if api != nil {
-					if _, err := api.AuthLogOut(runCtx); err != nil {
-						c.logger.Warn("auth.logOut failed during shutdown", zap.Error(err))
-					} else {
-						c.logger.Info("telegram client logged out")
-					}
-				}
-
-				return runCtx.Err()
+			case <-c.stopCh:
+				c.logger.Info("gotd run callback exiting (logout)")
+				return nil
 
 			case req := <-c.qrReqCh:
 
@@ -116,7 +116,7 @@ func (c *Client) Start(ctx context.Context) error {
 					pwd := os.Getenv("TG_2FA_PASSWORD")
 
 					qr := qrlogin.NewQR(
-						api,
+						c.client.API(),
 						c.appID,
 						c.appHash,
 						qrlogin.Options{},
@@ -124,7 +124,7 @@ func (c *Client) Start(ctx context.Context) error {
 
 					var urlSent bool
 
-					_, err := qr.Auth(runCtx, qrlogin.LoggedIn(c.loginTokenCh),
+					_, err := qr.Auth(innerCtx, qrlogin.LoggedIn(c.loginTokenCh),
 						func(ctx context.Context, token qrlogin.Token) error {
 							if !urlSent {
 								r.resp <- qrResp{token.URL(), nil}
@@ -143,7 +143,7 @@ func (c *Client) Start(ctx context.Context) error {
 								c.logger.Error("2FA password required but TG_2FA_PASSWORD is not set")
 								return
 							}
-							if _, err := c.client.Auth().Password(runCtx, pwd); err != nil {
+							if _, err := c.client.Auth().Password(innerCtx, pwd); err != nil {
 								c.logger.Error("2FA password auth failed", zap.Error(err))
 								return
 							}
@@ -177,6 +177,40 @@ func (c *Client) Start(ctx context.Context) error {
 			}
 		}
 	})
+}
+
+// LogOut performs auth.logOut while the connection is still alive,
+// then shuts down the client cleanly.
+func (c *Client) LogOut() {
+	c.mu.RLock()
+	client := c.client
+	cancel := c.runCancel
+	c.mu.RUnlock()
+
+	if client != nil {
+		// Use a fresh context — the run context is still active at this point.
+		logoutCtx, logoutCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer logoutCancel()
+
+		if _, err := client.API().AuthLogOut(logoutCtx); err != nil {
+			c.logger.Warn("auth.logOut failed", zap.Error(err))
+		} else {
+			c.logger.Info("telegram client logged out")
+		}
+	}
+
+	// Signal the run‑loop goroutine to return, which lets client.Run finish.
+	select {
+	case <-c.stopCh:
+		// already closed
+	default:
+		close(c.stopCh)
+	}
+
+	// Cancel the run context so gotd tears down the transport.
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (c *Client) handleUpdate(update tg.UpdatesClass) {

@@ -1,0 +1,13 @@
+services:
+  telegram-service:
+    build: .
+    container_name: telegram-service
+    ports:
+      - "50051:50051"
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
+      TG_2FA_PASSWORD: ${TG_2FA_PASSWORD}
+    volumes:
+      - ./sessions:/app/sessions
+    restart: unless-stopped

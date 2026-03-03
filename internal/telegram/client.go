@@ -3,15 +3,19 @@ package telegram
 import (
 	"context"
 	"errors"
-	"github.com/gotd/td/telegram/auth/qrlogin"
-	"github.com/gotd/td/tg"
-	"github.com/zen-flo/telegram-service/internal/broker"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	tdtelegram "github.com/gotd/td/telegram"
+	"github.com/gotd/td/telegram/auth/qrlogin"
+	"github.com/gotd/td/tgerr"
+
+	"github.com/gotd/td/session"
+	"github.com/gotd/td/tg"
+	"github.com/zen-flo/telegram-service/internal/broker"
 	"go.uber.org/zap"
 )
 
@@ -29,8 +33,9 @@ type Client struct {
 	dispatcher *broker.Dispatcher
 	sessionID  string
 
-	peerMu    sync.RWMutex
-	peerCache map[string]tg.InputPeerClass
+	peerMu       sync.RWMutex
+	peerCache    map[string]tg.InputPeerClass
+	loginTokenCh chan struct{}
 }
 
 type qrReq struct {
@@ -45,13 +50,14 @@ type qrResp struct {
 
 func NewClient(appID int, appHash string, logger *zap.Logger, dispatcher *broker.Dispatcher, sessionID string) *Client {
 	c := &Client{
-		appID:      appID,
-		appHash:    appHash,
-		logger:     logger,
-		qrReqCh:    make(chan qrReq, 4),
-		dispatcher: dispatcher,
-		sessionID:  sessionID,
-		peerCache:  make(map[string]tg.InputPeerClass),
+		appID:        appID,
+		appHash:      appHash,
+		logger:       logger,
+		qrReqCh:      make(chan qrReq, 4),
+		dispatcher:   dispatcher,
+		sessionID:    sessionID,
+		peerCache:    make(map[string]tg.InputPeerClass),
+		loginTokenCh: make(chan struct{}, 1),
 	}
 
 	if appID == 0 || appHash == "" {
@@ -72,6 +78,9 @@ func (c *Client) Start(ctx context.Context) error {
 		c.appID,
 		c.appHash,
 		tdtelegram.Options{
+			SessionStorage: &session.FileStorage{
+				Path: "sessions/" + c.sessionID + ".json",
+			},
 			UpdateHandler: tdtelegram.UpdateHandlerFunc(func(ctx context.Context, u tg.UpdatesClass) error {
 				c.handleUpdate(u)
 				return nil
@@ -102,26 +111,50 @@ func (c *Client) Start(ctx context.Context) error {
 
 			case req := <-c.qrReqCh:
 
-				qr := qrlogin.NewQR(api, c.appID, c.appHash, qrlogin.Options{})
-
-				token, err := qr.Export(runCtx)
-				if err != nil {
-					req.resp <- qrResp{"", err}
-					continue
-				}
-
-				req.resp <- qrResp{token.URL(), nil}
-
 				go func(r qrReq) {
-					c.logger.Info("waiting for QR scan confirmation",
-						zap.String("session", c.sessionID))
 
-					_, err := qr.Import(runCtx)
+					pwd := os.Getenv("TG_2FA_PASSWORD")
+
+					qr := qrlogin.NewQR(
+						api,
+						c.appID,
+						c.appHash,
+						qrlogin.Options{},
+					)
+
+					var urlSent bool
+
+					_, err := qr.Auth(runCtx, qrlogin.LoggedIn(c.loginTokenCh),
+						func(ctx context.Context, token qrlogin.Token) error {
+							if !urlSent {
+								r.resp <- qrResp{token.URL(), nil}
+								urlSent = true
+							} else {
+								c.logger.Info("QR token refreshed",
+									zap.String("url", token.URL()))
+							}
+							return nil
+						},
+					)
+
 					if err != nil {
-						if !errors.Is(err, context.Canceled) {
-							c.logger.Error("qr import failed", zap.Error(err))
+						if tgerr.Is(err, "SESSION_PASSWORD_NEEDED") {
+							if pwd == "" {
+								c.logger.Error("2FA password required but TG_2FA_PASSWORD is not set")
+								return
+							}
+							if _, err := c.client.Auth().Password(runCtx, pwd); err != nil {
+								c.logger.Error("2FA password auth failed", zap.Error(err))
+								return
+							}
+							c.logger.Info("2FA password accepted")
+						} else {
+							if !urlSent {
+								r.resp <- qrResp{"", err}
+							}
+							c.logger.Error("QR auth failed", zap.Error(err))
+							return
 						}
-						return
 					}
 
 					c.logger.Info("telegram auth success",
@@ -177,6 +210,14 @@ func (c *Client) handleUpdate(update tg.UpdatesClass) {
 
 func (c *Client) processSingleUpdate(update tg.UpdateClass) {
 	switch u := update.(type) {
+
+	case *tg.UpdateLoginToken:
+		_ = u
+		// Сигналим каналу, что QR-код был отсканирован
+		select {
+		case c.loginTokenCh <- struct{}{}:
+		default:
+		}
 
 	case *tg.UpdateNewMessage:
 		msg, ok := u.Message.(*tg.Message)
